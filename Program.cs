@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using System.Net.Sockets;
 using System.Net;
 using System.IO;
@@ -236,6 +237,12 @@ namespace DNWS
         }
     }
 
+    public enum ThreadType {
+        Sequential,
+        MultiThread,
+        ThreadPool
+    }
+
     /// <summary>
     /// Main server class, open the socket and wait for client
     /// </summary>
@@ -247,11 +254,15 @@ namespace DNWS
         protected Socket clientSocket;
         private static DotNetWebServer _instance = null;
         protected int id;
+        protected ThreadType _threadType;
 
-        private DotNetWebServer(Program parent)
+        private DotNetWebServer(Program parent, int maxThreadPool, ThreadType threadType)
         {
             _parent = parent;
+            _threadType = threadType;
             id = 0;
+
+            ThreadPool.SetMaxThreads(maxThreadPool, maxThreadPool);
         }
 
         /// <summary>
@@ -263,9 +274,21 @@ namespace DNWS
         {
             if (_instance == null)
             {
-                _instance = new DotNetWebServer(parent);
+                _instance = new DotNetWebServer(parent, 20, ThreadType.MultiThread);
             }
             return _instance;
+        }
+
+        public void handleRequestMultiThread(Object stat) {
+            TaskInfo taskInfo = stat as TaskInfo;
+            Thread thread = new Thread(() => taskInfo.hp.Process());
+            thread.Start();
+        }
+
+        public void handleRequestThreadPool(Object stat) {
+            TaskInfo taskInfo = stat as TaskInfo;
+            HTTPProcessor hp = taskInfo.hp;
+            hp.Process();
         }
 
         /// <summary>
@@ -289,7 +312,19 @@ namespace DNWS
                     // Get one, show some info
                     _parent.Log("Client accepted:" + clientSocket.RemoteEndPoint.ToString());
                     HTTPProcessor hp = new HTTPProcessor(clientSocket, _parent);
-                    hp.Process();
+
+                    switch(_threadType) 
+                    {
+                        case ThreadType.Sequential:
+                            hp.Process();
+                            break;
+                        case ThreadType.MultiThread:
+                            handleRequestMultiThread(new TaskInfo(hp));
+                            break;
+                        case ThreadType.ThreadPool:
+                            ThreadPool.QueueUserWorkItem(handleRequestThreadPool, new TaskInfo(hp));
+                            break;
+                    }
                 }
                 catch (Exception ex)
                 {
